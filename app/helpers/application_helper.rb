@@ -67,14 +67,29 @@ module ApplicationHelper
   #
   # rubocop:disable Rails/HelperInstanceVariable
   def view_class
-    if @podcast_episode_show # custom due to edge cases
-      "stories stories-show podcast_episodes-show"
-    elsif @story_show
-      "stories stories-show"
-    else
-      "#{controller_name} #{current_page}"
-    end
+    base_classes = if @podcast_episode_show # custom due to edge cases
+                     "stories stories-show podcast_episodes-show"
+                   elsif @story_show
+                     "stories stories-show"
+                   else
+                     "#{controller_name} #{current_page}"
+                   end
+    base_classes += article_view_classes if @article&.class&.name&.start_with?("Article") # Article or ArticleDecorator
+    base_classes += page_view_classes if @page&.class&.name&.start_with?("Page")
+    base_classes
   end
+
+  def article_view_classes
+    base_classes = " #{@article.decorate.cached_tag_list_array.map { |tag| "articletag-#{tag}" }.join(' ')}"
+    base_classes += " articleuser-#{@article.user_id}"
+    base_classes += " articleorg-#{@article.organization_id}" if @article.organization_id
+    base_classes
+  end
+
+  def page_view_classes
+    " pageslug-#{@page.slug.gsub('/', '__SLASH__')}"
+  end
+
   # rubocop:enable Rails/HelperInstanceVariable
 
   # This function derives the appropriate "title" given the page_title.  Further it assigns the
@@ -209,6 +224,18 @@ module ApplicationHelper
     )
   end
 
+  def subscription_icon(user, modifier = nil)
+    return unless user.respond_to?(:cached_base_subscriber?)
+    return unless FeatureFlag.enabled?("subscriber_icon") && user.cached_base_subscriber?
+    return image_tag("subscription-icon.png", class: "subscription-icon") if modifier == "no_link"
+
+    link_to image_tag("subscription-icon.png",
+                      alt: "Subscriber",
+                      class: "subscription-icon"),
+            "/++",
+            style: "display: inline;"
+  end
+
   def user_colors_style(user)
     "border: 2px solid #{user.decorate.darker_color}; \
     box-shadow: 5px 6px 0px #{user.decorate.darker_color}"
@@ -236,7 +263,31 @@ module ApplicationHelper
     release_footprint = ForemInstance.deployed_at
     return path if release_footprint.blank?
 
-    "#{path}-#{params[:locale]}-#{release_footprint}-#{Settings::General.admin_action_taken_at.rfc3339}"
+    "#{path}-#{params[:locale]}-#{release_footprint}-#{Settings::General.admin_action_taken_at.rfc3339}-#{RequestStore.store[:subforem_id]}"
+  end
+
+  def social_media_constructed_url(social_media_type, handle)
+    if social_media_type.to_s == "mastodon"
+      handle
+    elsif social_media_type.to_s == "twitter"
+      "https://x.com/#{handle}"
+    elsif social_media_type.to_s == "bluesky"
+      "https://bsky.app/profile/#{handle}"
+    elsif social_media_type.to_s == "linkedin"
+      "https://www.linkedin.com/in/#{handle}"
+    elsif social_media_type.to_s == "youtube"
+      "https://www.youtube.com/@#{handle}"
+    else
+      "https://#{social_media_type}.com/#{handle}"
+    end
+  end
+
+  def root_unless_default_subforem
+    if RequestStore.store[:subforem_id].present? && (RequestStore.store[:subforem_id] == RequestStore.store[:default_subforem_id])
+      Subforem.first
+    elsif RequestStore.store[:subforem_id].present?
+      Subforem.where(root: true).first
+    end
   end
 
   def copyright_notice
@@ -249,7 +300,7 @@ module ApplicationHelper
   end
 
   def collection_link(collection, **kwargs)
-    size_string = I18n.t("views.articles.series.size", count: collection.articles.published.size)
+    size_string = I18n.t("views.articles.series.size", count: collection.articles.published.from_subforem.size)
     body = if collection.slug.present?
              I18n.t("views.articles.series.subtitle", slug: collection.slug,
                                                       size: size_string)
@@ -291,6 +342,13 @@ module ApplicationHelper
     return if Settings::General.meta_keywords[:tag].blank?
 
     tag.meta name: "keywords", content: "#{Settings::General.meta_keywords[:tag]}, #{tag_name}"
+  end
+
+  def constructed_full_url(path, subforem_id)
+    return path unless subforem_id.present?
+
+    domain = Subforem.cached_id_to_domain_hash[subforem_id]
+    "#{URL.protocol}#{domain}#{path}"
   end
 
   def app_url(uri = nil)

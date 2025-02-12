@@ -5,6 +5,7 @@ class User < ApplicationRecord
   include CloudinaryHelper
 
   include Images::Profile.for(:profile_image_url)
+  include AlgoliaSearchable
 
   # NOTE: we are using an inline module to keep profile related things together.
   concerning :Profiles do
@@ -18,7 +19,11 @@ class User < ApplicationRecord
       attr_accessor :_skip_creating_profile
 
       # All new users should automatically have a profile
-      after_create_commit -> { Profile.create(user: self) }, unless: :_skip_creating_profile
+      after_create_commit unless: :_skip_creating_profile do
+        Profile.find_or_create_by(user: self)
+      rescue ActiveRecord::RecordNotUnique
+        Rails.logger.warn("Profile already exists for user #{id}")
+      end
     end
   end
 
@@ -26,14 +31,6 @@ class User < ApplicationRecord
 
   extend UniqueAcrossModels
   USERNAME_MAX_LENGTH = 30
-  # follow the syntax in https://interledger.org/rfcs/0026-payment-pointers/#payment-pointer-syntax
-  PAYMENT_POINTER_REGEXP = %r{
-    \A                # start
-    \$                # starts with a dollar sign
-    ([a-zA-Z0-9\-.])+ # matches the hostname (ex ilp.uphold.com)
-    (/[\x20-\x7F]+)?  # optional forward slash and identifier with printable ASCII characters
-    \z
-  }x
 
   RECENTLY_ACTIVE_LIMIT = 10_000
 
@@ -123,7 +120,7 @@ class User < ApplicationRecord
   mount_uploader :profile_image, ProfileImageUploader
 
   devise :invitable, :omniauthable, :registerable, :database_authenticatable, :confirmable, :rememberable,
-         :recoverable, :lockable
+         :recoverable, :lockable, :trackable
 
   validates :articles_count, presence: true
   validates :badge_achievements_count, presence: true
@@ -138,13 +135,15 @@ class User < ApplicationRecord
   validates :following_users_count, presence: true
   validates :name, length: { in: 1..100 }, presence: true
   validates :password, length: { in: 8..100 }, allow_nil: true
-  validates :payment_pointer, format: PAYMENT_POINTER_REGEXP, allow_blank: true
   validates :rating_votes_count, presence: true
   validates :reactions_count, presence: true
   validates :sign_in_count, presence: true
   validates :spent_credits_count, presence: true
   validates :subscribed_to_user_subscriptions_count, presence: true
   validates :unspent_credits_count, presence: true
+  validates :max_score, numericality: { greater_than_or_equal_to: 0 }
+  validates :reputation_modifier, numericality: { greater_than_or_equal_to: 0, less_than_or_equal_to: 5 },
+                                  presence: true
 
   # add validators for provider related usernames
   Authentication::Providers.username_fields.each do |username_field|
@@ -218,6 +217,13 @@ class User < ApplicationRecord
     order(updated_at: :desc).limit(active_limit)
   }
 
+  scope :following_tags, lambda { |tags|
+    tags = tags.gsub(" ", "").split(",") if tags.is_a?(String)
+    joins("INNER JOIN follows ON follows.follower_id = users.id AND follows.follower_type = 'User'")
+      .joins("INNER JOIN tags ON tags.id = follows.followable_id AND follows.followable_type = 'ActsAsTaggableOn::Tag'")
+      .where(tags: { name: tags })
+      .distinct
+  }
   scope :above_average, lambda {
     where(
       articles_count: average_articles_count..,
@@ -229,7 +235,6 @@ class User < ApplicationRecord
 
   # make sure usernames are not empty, to be able to use the database unique index
   before_validation :set_username
-  before_validation :strip_payment_pointer
   before_create :create_users_settings_and_notification_settings_records
   after_update :refresh_auto_audience_segments
   before_destroy :remove_from_mailchimp_newsletters, prepend: true
@@ -313,6 +318,7 @@ class User < ApplicationRecord
     calculated_score = (badge_achievements_count * 10) + user_reaction_points
     calculated_score -= 500 if spam?
     update_column(:score, calculated_score)
+    AlgoliaSearch::SearchIndexWorker.perform_async(self.class.name, id, false)
   end
 
   def path
@@ -332,6 +338,20 @@ class User < ApplicationRecord
       .cached_tagged_with_any(cached_followed_tag_names)
       .unscope(:select)
       .union(Article.where(user_id: cached_following_users_ids))
+  end
+
+  def cached_followed_tag_names_or_recent_tags
+    followed_tags = cached_followed_tag_names
+    return followed_tags if followed_tags.any?
+
+    ### pluck cached_tag_list for articles with most recent page views. Page views have a user_id and article_id
+    ### cached_tag_list is a comma-separated string of tag names on the article
+
+    cached_recent_pageview_article_ids = page_views.order("created_at DESC").limit(6).pluck(:article_id)
+    tags = Article.where(id: cached_recent_pageview_article_ids).pluck(:cached_tag_list)
+      .map { |list| list.to_s.split(", ") }
+      .flatten.uniq.reject(&:empty?)
+    tags + %w[career productivity ai git] # These are highly DEV-specific. Should be refactored later to be config'd
   end
 
   def cached_following_users_ids
@@ -358,9 +378,20 @@ class User < ApplicationRecord
   def cached_reading_list_article_ids
     Rails.cache.fetch("reading_list_ids_of_articles_#{id}_#{public_reactions_count}_#{last_reacted_at}") do
       readinglist = Reaction.readinglist_for_user(self).order("created_at DESC")
-      published = Article.published.where(id: readinglist.pluck(:reactable_id)).ids
+      published = Article.published.from_subforem.where(id: readinglist.pluck(:reactable_id)).ids
       readinglist.filter_map { |r| r.reactable_id if published.include? r.reactable_id }
     end
+  end
+
+  def cached_role_names
+    cache_key = "user-#{id}/role_names"
+    Rails.cache.fetch(cache_key, expires_in: 200.hours) do
+      roles.pluck(:name)
+    end
+  end
+
+  def cached_base_subscriber?
+    cached_role_names.include?("base_subscriber")
   end
 
   def processed_website_url
@@ -460,9 +491,11 @@ class User < ApplicationRecord
     :user_subscription_tag_available?,
     :vomited_on?,
     :warned?,
+    :base_subscriber?,
     to: :authorizer,
   )
   alias suspended suspended?
+  alias spam spam?
   ##############################################################################
   #
   # End Authorization Refactor
@@ -597,7 +630,19 @@ class User < ApplicationRecord
   end
 
   def has_no_published_content?
-    articles.published.empty? && comments_count.zero?
+    articles.published.from_subforem.empty? && comments_count.zero?
+  end
+
+  def send_magic_link!
+    # Generate random string
+    self.sign_in_token = SecureRandom.hex(20)
+    self.sign_in_token_sent_at = Time.now.utc
+    if self.save
+      VerificationMailer.with(user_id: id).magic_link.deliver_now
+    else
+      errors.add(:email, "Error sending magic link")
+      Rails.logger.error("Error sending magic link for user #{id}")
+    end
   end
 
   protected
@@ -613,7 +658,7 @@ class User < ApplicationRecord
 
   def generate_social_images
     change = saved_change_to_attribute?(:name) || saved_change_to_attribute?(:profile_image)
-    return unless change && articles.published.size.positive?
+    return unless change && articles.published.from_subforem.size.positive?
 
     Images::SocialImageWorker.perform_async(id, self.class.name)
   end
@@ -687,10 +732,6 @@ class User < ApplicationRecord
     errors.add(:password, I18n.t("models.user.password_not_matched"))
   end
 
-  def strip_payment_pointer
-    self.payment_pointer = payment_pointer.strip if payment_pointer
-  end
-
   def confirmation_required?
     ForemInstance.smtp_enabled?
   end
@@ -698,6 +739,7 @@ class User < ApplicationRecord
   def update_user_roles_cache(...)
     authorizer.clear_cache
     Rails.cache.delete("user-#{id}/has_trusted_role")
+    Rails.cache.delete("user-#{id}/role_names")
     refresh_auto_audience_segments
     trusted?
   end

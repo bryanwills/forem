@@ -7,7 +7,7 @@ describe('New article has empty flags, quality reactions and score', () => {
     cy.get('@user').then((user) => {
       cy.loginUser(user).then(() => {
         cy.createArticle({
-          title: 'Test article',
+          title: `Test article ${new Date().getTime()}`,
           tags: ['beginner', 'ruby', 'go'],
           content: `This is another test article's contents.`,
           published: true,
@@ -265,7 +265,8 @@ describe('Article flagged by a trusted user', () => {
 
     cy.wait('@request');
 
-    cy.get('.flex .c-indicator').should('be.visible').as('flagStatus');
-    cy.get('@flagStatus').should('contain', 'Valid');
+    cy.get('.flex .c-indicator')
+      .should('be.visible')
+      .should('contain', 'Valid');
   });
 });

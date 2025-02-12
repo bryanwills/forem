@@ -78,6 +78,9 @@ module Moderator
         user.add_role(:spam)
         remove_privileges
         remove_notifications
+        resolve_spam_reports
+        confirm_flag_reactions
+        user.profile.touch
       when "Super Moderator"
         assign_elevated_role_to_user(user, :super_moderator)
         TagModerators::AddTrustedRole.call(user)
@@ -101,6 +104,8 @@ module Moderator
         TagModerators::AddTrustedRole.call(user)
       when "Warned"
         warned
+      when "Base Subscriber"
+        base_subscriber
       end
       create_note(role, note)
 
@@ -147,6 +152,13 @@ module Moderator
       remove_privileges
     end
 
+    def base_subscriber
+      user.add_role(:base_subscriber)
+      user.touch
+      user.profile&.touch
+      NotifyMailer.with(user: user).base_subscriber_role_email.deliver_now
+    end
+
     def remove_negative_roles
       user.remove_role(:limited) if user.limited?
       user.remove_role(:suspended) if user.suspended?
@@ -157,6 +169,16 @@ module Moderator
 
     def update_roles
       handle_user_status(user_params[:user_status], user_params[:note_for_current_role])
+    end
+
+    private
+
+    def resolve_spam_reports
+      Users::ResolveSpamReportsWorker.perform_async(user.id)
+    end
+
+    def confirm_flag_reactions
+      Users::ConfirmFlagReactionsWorker.perform_async(user.id)
     end
   end
 end

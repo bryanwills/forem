@@ -1,5 +1,6 @@
 class PodcastEpisode < ApplicationRecord
   include PgSearch::Model
+  include AlgoliaSearchable
 
   acts_as_taggable
 
@@ -85,6 +86,10 @@ class PodcastEpisode < ApplicationRecord
 
   def tag_keywords_for_search
     tags.pluck(:keywords_for_search).join
+  end
+
+  def subforem_id
+    nil
   end
 
   ## Useless stubs

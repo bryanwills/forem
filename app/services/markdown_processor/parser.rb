@@ -5,6 +5,8 @@ module MarkdownProcessor
       %r{data:text/html[,;][\sa-z0-9]*}i,
     ].freeze
 
+    CODE_BLOCKS_REGEX = /(~{3}|`{3}|`{2}|`)[\s\S]*?\1/
+
     WORDS_READ_PER_MINUTE = 275.0
 
     # @param content [String] The user input, mix of markdown and liquid.  This might be an
@@ -44,11 +46,41 @@ module MarkdownProcessor
         parsed_liquid = Liquid::Template.parse(sanitized_content.to_str, @liquid_tag_options)
 
         html = markdown.render(parsed_liquid.render)
+      rescue NoMethodError => e
+        if e.message.include?('line_number')
+          # Handle the specific NoMethodError
+          Rails.logger.error("Liquid rendering error: #{e.message}")
+          html = sanitized_content.to_str
+        else
+          raise e
+        end
       rescue Liquid::SyntaxError => e
         html = e.message
       end
 
+      html = add_target_blank_to_outbound_links(html)
       parse_html(html, prefix_images_options)
+    end
+
+    def add_target_blank_to_outbound_links(html)
+      app_domain = Settings::General.app_domain
+      doc = Nokogiri::HTML.fragment(html)
+      doc.css('a[href^="http"]').each do |link|
+        href = link["href"]
+        next unless href&.exclude?(app_domain)
+
+        link[:target] = "_blank"
+        existing_rel = link[:rel]
+        new_rel = %w[noopener noreferrer]
+        if existing_rel
+          existing_rel_values = existing_rel.split
+          new_rel = (existing_rel_values + new_rel).uniq.join(" ")
+        else
+          new_rel = new_rel.join(" ")
+        end
+        link[:rel] = new_rel
+      end
+      doc.to_html
     end
 
     def calculate_reading_time
@@ -95,7 +127,8 @@ module MarkdownProcessor
     end
 
     def catch_xss_attempts(markdown)
-      return unless markdown.match?(Regexp.union(BAD_XSS_REGEX))
+      markdown_without_code_blocks = markdown.gsub(CODE_BLOCKS_REGEX, "")
+      return unless markdown_without_code_blocks.match?(Regexp.union(BAD_XSS_REGEX))
 
       raise ArgumentError, I18n.t("services.markdown_processor.parser.invalid_markdown_detected")
     end

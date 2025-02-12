@@ -86,6 +86,45 @@ function buildArticleHTML(article, currentUserId = null) {
     return parsedDocument.body.innerHTML;
   }
 
+  if (article && article.class_name === 'User' && article.user === undefined) { // Represents different return values for how users are fetched.
+    const html = `
+      <article class="crayons-story">
+        <div class="crayons-story__body flex items-start gap-2">
+          <a href="${article.username}" class="crayons-podcast-episode__cover">
+            <img src="${article.profile_image.url}" alt="" loading="lazy" />
+          </a>
+          <div>
+            <h3 class="crayons-subtitle-2 lh-tight py-1">
+              <a href="${article.username}" class="c-link"> ${article.name} </a>
+            </h3>
+            <p class="crayons-story__slug-segment">@${article.username}</p>
+            ${
+              article.summary
+                ? `<div class="truncate-at-3 top-margin-4">${article.summary}</div>`
+                : ''
+            }
+          </div>
+          <div class="print-hidden" style="margin-left: auto">
+            <button class="crayons-btn follow-action-button whitespace-nowrap follow-user w-100" data-info=''>Follow</button>
+          </div>
+        </div>
+      </article>
+    `;
+
+    const parser = new DOMParser();
+    const parsedDocument = parser.parseFromString(html, 'text/html');
+    parsedDocument.querySelector('img').alt = article.name;
+    parsedDocument.querySelector('button').dataset.info = JSON.stringify({
+      id: article.id,
+      name: article.name,
+      className: 'User',
+      style: 'full',
+    });
+
+    return parsedDocument.body.innerHTML;
+  }
+
+
   if (article) {
     var container = document.getElementById('index-container');
 
@@ -190,6 +229,9 @@ function buildArticleHTML(article, currentUserId = null) {
       picUrl = article.user.profile_image_90;
       profileUsername = article.user.username;
       userName = filterXSS(article.user.name);
+      if (article.user.cached_base_subscriber) {
+        userName = userName + ' <img class="subscription-icon" src="' + document.body.dataset.subscriptionIcon + '" alt="Subscriber" />';
+      }
     }
     var orgHeadline = '';
     var forOrganization = '';
@@ -260,7 +302,9 @@ function buildArticleHTML(article, currentUserId = null) {
               <span class="crayons-avatar crayons-avatar--xl mr-2 shrink-0">
                 <img src="${picUrl}" class="crayons-avatar__image" alt="" loading="lazy" />
               </span>
-              <span class="crayons-link crayons-subtitle-2 mt-5">${userName}</span>
+              <span class="crayons-link crayons-subtitle-2 mt-5">
+                ${userName}
+              </span>
             </a>
           </div>
           <div class="print-hidden">
@@ -286,7 +330,7 @@ function buildArticleHTML(article, currentUserId = null) {
     }">${userName}</a>
     ${
       isArticle
-        ? `<div class="profile-preview-card relative mb-4 s:mb-0 fw-medium hidden m:inline-block"><button id="story-author-preview-trigger-${article.id}" aria-controls="story-author-preview-content-${article.id}" class="profile-preview-card__trigger fs-s crayons-btn crayons-btn--ghost p-1 -ml-1 -my-2" aria-label="${userName} profile details">${userName}</button>${previewCardContent}</div>`
+        ? `<div class="profile-preview-card relative mb-4 s:mb-0 fw-medium hidden m:inline-block"><button id="story-author-preview-trigger-${article.id}" aria-controls="story-author-preview-content-${article.id}" class="profile-preview-card__trigger fs-s crayons-btn crayons-btn--ghost p-1 -ml-1 -my-2" aria-label="profile details">${userName}</button>${previewCardContent}</div>`
         : ''
     }
             ${forOrganization}
@@ -392,19 +436,18 @@ function buildArticleHTML(article, currentUserId = null) {
         ${navigationLink}\
         <div role="presentation">\
           ${videoHTML}\
-          <div class="crayons-story__body">\
+          <div class="crayons-story__body crayons-story__body-${article.type_of}">\
             <div class="crayons-story__top">\
               ${meta}
             </div>\
             <div class="crayons-story__indention">
-              <h3 class="crayons-story__title">
+              <h3 class="crayons-story__title crayons-story__title-${article.type_of}">
                 <a href="${article.path}" id="article-link-${article.id}">
                   ${filterXSS(article.title)}
                 </a>
               </h3>\
-              <div class="crayons-story__tags">
-                ${tagString}
-              </div>\
+              ${article.type_of !== 'status' ? `<div class="crayons-story__tags">${tagString}</div>` : ''}\
+              ${(article.type_of === 'status' && article.body_preview && article.body_preview.length > 10) ? `<div class="crayons-story__contentpreview text-styles">${article.body_preview}</div>` : '' }\
               ${searchSnippetHTML}\
               <div class="crayons-story__bottom">\
                 <div class="crayons-story__details">

@@ -8,6 +8,7 @@ Rails.application.routes.draw do
     registrations: "registrations",
     invitations: "invitations",
     passwords: "passwords",
+    sessions: "sessions",
     confirmations: "confirmations"
   }
 
@@ -15,6 +16,16 @@ Rails.application.routes.draw do
     get "/enter", to: "registrations#new", as: :sign_up
     get "/confirm-email", to: "confirmations#new"
     delete "/sign_out", to: "devise/sessions#destroy"
+  end
+
+  # This route makes default Ahoy Email redirect URLs available to us
+  # However, we monkeypatch this behavior in config/initializers/ahoy_email.rb so this
+  # routes is not currently where emails pass through.
+  mount AhoyEmail::Engine => "/ahoy"
+
+  # Custom controller for tracking clicks asynchronously
+  namespace :ahoy do
+    post "email_clicks", to: "email_clicks#create"
   end
 
   get "/r/mobile", to: "deep_links#mobile"
@@ -70,6 +81,8 @@ Rails.application.routes.draw do
 
         resources :pages, only: %i[index show create update destroy]
 
+        resources :feedback_messages, only: :update
+
         resources :organizations, only: %i[index create update destroy]
 
         scope("/users/:id") do
@@ -98,7 +111,10 @@ Rails.application.routes.draw do
     namespace :incoming_webhooks do
       get "/mailchimp/:secret/unsubscribe", to: "mailchimp_unsubscribes#index", as: :mailchimp_unsubscribe_check
       post "/mailchimp/:secret/unsubscribe", to: "mailchimp_unsubscribes#create", as: :mailchimp_unsubscribe
+      resources :stripe_events, only: [:create]
     end
+
+    resources :magic_links, only: [:show, :create, :new]
 
     resources :messages, only: [:create]
     resources :articles, only: %i[update create destroy] do
@@ -116,6 +132,10 @@ Rails.application.routes.draw do
     end
     resources :comment_mutes, only: %i[update]
     resources :users, only: %i[index show], defaults: { format: :json } do # internal API
+      member do
+        put "spam", to: "users#toggle_spam"
+        delete "spam", to: "users#toggle_spam"
+      end
       collection do
         resources :devices, only: %i[create destroy]
       end
@@ -144,6 +164,7 @@ Rails.application.routes.draw do
       end
     end
     resources :stripe_active_cards, only: %i[create update destroy]
+    resources :stripe_subscriptions, only: %i[new edit destroy]
     resources :github_repos, only: %i[index] do
       collection do
         post "/update_or_create", to: "github_repos#update_or_create"
@@ -155,6 +176,7 @@ Rails.application.routes.draw do
     resources :tag_adjustments, only: %i[create destroy]
     resources :rating_votes, only: [:create]
     resources :page_views, only: %i[create update]
+    resources :insights, only: %i[create]
     resources :feed_events, only: %i[create]
     resources :credits, only: %i[index new create] do
       get "purchase", on: :collection, to: "credits#new"
@@ -166,6 +188,9 @@ Rails.application.routes.draw do
     # temporary keeping both routes while transitioning (renaming) display_ads => billboards
     resources :display_ad_events, only: [:create], controller: :billboard_events
     resources :billboard_events, only: [:create]
+    # Alias for reporting in case "events" triggers spam filters
+    post "/bb_tabulations", to: "billboard_events#create", as: :bb_tabulations
+
     resources :badges, only: [:index]
     resources :user_blocks, param: :blocked_id, only: %i[show create destroy]
     resources :podcasts, only: %i[new create]
@@ -216,18 +241,25 @@ Rails.application.routes.draw do
     get "/internal", to: redirect("/admin")
     get "/internal/:path", to: redirect("/admin/%{path}")
 
-    get "/social_previews/article/:id", to: "social_previews#article", as: :article_social_preview
-
     get "/async_info/base_data", to: "async_info#base_data", defaults: { format: :json }
     get "/async_info/navigation_links", to: "async_info#navigation_links"
 
+    get "auth_pass/iframe", to: "auth_pass#iframe", as: :auth_pass_iframe
+    post "auth_pass/token_login", to: "auth_pass#token_login", as: :auth_pass_token_login
+
     # Billboards
     scope "/:username/:slug" do
-      get "/billboards/:placement_area", to: "billboards#show", as: :article_billboard
+      get "/billboards/:placement_area", to: "billboards#show", as: :article_billboard_full
+      get "/bb/:placement_area", to: "billboards#show"
+      get "/#{ENV.fetch("PRIOR_BILLBOARD_URL_COMPONENT", "bb")}/:placement_area", to: "billboards#show"
+      get "/#{ENV.fetch("BILLBOARD_URL_COMPONENT", "bb")}/:placement_area", to: "billboards#show", as: :article_billboard
       # temporary keeping both routes while transitioning (renaming) display_ads => billboards
       get "/display_ads/:placement_area", to: "billboards#show"
     end
-    get "/billboards/:placement_area", to: "billboards#show", as: :billboard
+    get "/billboards/:placement_area", to: "billboards#show", as: :billboard_full
+    get "/bb/:placement_area", to: "billboards#show"
+    get "/#{ENV.fetch("PRIOR_BILLBOARD_URL_COMPONENT", "bb")}/:placement_area", to: "billboards#show"
+    get "/#{ENV.fetch("BILLBOARD_URL_COMPONENT", "bb")}/:placement_area", to: "billboards#show", as: :billboard
     # temporary keeping both routes while transitioning (renaming) display_ads => billboards
     get "/display_ads/:placement_area", to: "billboards#show"
 
@@ -245,6 +277,10 @@ Rails.application.routes.draw do
     post "users/api_secrets", to: "api_secrets#create", as: :users_api_secrets
     delete "users/api_secrets/:id", to: "api_secrets#destroy", as: :users_api_secret
     post "users/update_password", to: "users#update_password", as: :user_update_password
+
+    # Internal Admin API
+    # put "/users/:id/spam", to: "users#toggle_spam", as: :user_toggle_spam
+    # delete "/users/:id/spam", to: "users#toggle_spam", as: :user_toggle_spam
 
     # The priority is based upon order of creation: first created -> highest priority.
     # See how all your routes lay out with "rake routes".
@@ -301,7 +337,9 @@ Rails.application.routes.draw do
     get "/settings/:tab/:org_id", to: "users#edit", constraints: { tab: /organization/ }
     get "/settings/:tab/:id", to: "users#edit", constraints: { tab: /response-templates/ }
     get "/signout_confirm", to: "users#signout_confirm"
+    get "/menu", to: "menus#show"
     get "/dashboard", to: "dashboards#show"
+    get "/dashboard/sidebar", to: "dashboards#sidebar"
     get "/dashboard/analytics", to: "dashboards#analytics"
     get "dashboard/analytics/org/:org_id", to: "dashboards#analytics", as: :dashboard_analytics_org
     get "dashboard/following", to: "dashboards#following_tags"
@@ -355,13 +393,17 @@ Rails.application.routes.draw do
     get "/t/:tag/:timeframe", to: "stories/tagged_articles#index",
                               constraints: { timeframe: /latest/ }
 
+
     get "/t/:tag/edit", to: "tags#edit", as: :edit_tag
     get "/t/:tag/admin", to: "tags#admin"
     patch "/tag/:id", to: "tags#update"
 
     get "/top/:timeframe", to: "stories#index"
 
+    get "/:feed_type/:timeframe", to: "stories#index", constraints: { feed_type: /following/, timeframe: /latest/  }
+
     get "/:timeframe", to: "stories#index", constraints: { timeframe: /latest/ }
+    get "/:feed_type", to: "stories#index", constraints: { feed_type: /discover|following/}
 
     get "/:username/series", to: "collections#index", as: "user_series"
     get "/:username/series/:id", to: "collections#show"

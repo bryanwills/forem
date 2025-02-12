@@ -1,6 +1,7 @@
 class Organization < ApplicationRecord
   include CloudinaryHelper
   include PgSearch::Model
+  include AlgoliaSearchable
 
   include Images::Profile.for(:profile_image_url)
 
@@ -131,11 +132,15 @@ class Organization < ApplicationRecord
     self
   end
 
+  def cached_base_subscriber?
+    false
+  end
+
   private
 
   def generate_social_images
     change = saved_change_to_attribute?(:name) || saved_change_to_attribute?(:profile_image)
-    return unless change && articles.published.size.positive?
+    return unless change && articles.published.from_subforem.size.positive?
 
     Images::SocialImageWorker.perform_async(id, self.class.name)
   end

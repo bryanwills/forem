@@ -107,8 +107,7 @@
   z-index: var(--z-sticky);
 
   @media (min-width: $breakpoint-m) {
-    border-top-left-radius: 0;
-    border-top-right-radius: 0;
+    border-radius: var(--radius-large);
     padding: 0;
     padding-bottom: 0;
     background: var(--body-bg);
@@ -252,6 +251,20 @@
       --reaction-color: var(--reaction-comment-color);
       --reaction-bg: var(--reaction-comment-bg);
     }
+  }
+}
+
+.only-sidebar-menu-item {
+  display: none !important;
+  @media (min-width: $breakpoint-s) {
+    display: block !important;
+  }
+}
+
+.only-mobile-menu-item {
+  display: block !important;
+  @media (min-width: $breakpoint-s) {
+    display: none !important;
   }
 }
 
@@ -476,9 +489,17 @@
   padding: 0.5em 0;
   cursor: default;
   display: flex;
-  column-gap: 2.2em;
+  column-gap: 1.2em;
   flex-wrap: wrap;
   min-height: 40px;
+
+  @media (min-width: $breakpoint-xs) {
+    column-gap: 1.7em;
+  }
+
+  @media (min-width: $breakpoint-s) {
+    column-gap: 2.2em;
+  }
 
   & > span {
     &.hidden {

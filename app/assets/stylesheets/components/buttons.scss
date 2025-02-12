@@ -5,9 +5,9 @@
   --brand-apple-color: #fff;
   --brand-apple-bg-hover: #1b1b1b;
 
-  --brand-twitter-bg: #1da1f2;
+  --brand-twitter-bg: #151616;
   --brand-twitter-color: #fff;
-  --brand-twitter-bg-hover: #0096f2;
+  --brand-twitter-bg-hover: #323436;
 
   --brand-github-bg: #24292e;
   --brand-github-color: #fff;
@@ -33,7 +33,7 @@
 // Basic styling
 .crayons-btn {
   // Setup
-  --border-width: 0px;
+  --border-width: 1px;
   --shadow-color: rgba(0, 0, 0, 0.05);
   --vertical-padding: var(--su-2);
   --horizontal-padding: var(--su-4);
@@ -163,7 +163,7 @@
   --color: var(--button-outlined-color);
   --color-hover: var(--button-outlined-color-hover);
 
-  --border-width: 2px;
+  --border-width: 1px;
 }
 
 .crayons-btn--danger {

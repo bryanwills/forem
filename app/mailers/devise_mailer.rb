@@ -1,4 +1,7 @@
 class DeviseMailer < Devise::Mailer
+  include Rails.application.routes.url_helpers
+  self.mailer_name = 'devise/mailer'
+
   default reply_to: proc { ForemInstance.reply_to_email_address }
 
   include Deliverable
@@ -11,6 +14,7 @@ class DeviseMailer < Devise::Mailer
     ActionMailer::Base.default_url_options[:host] = Settings::General.app_domain
   end
 
+  # Existing custom methods
   # rubocop:disable Style/OptionHash
   def invitation_instructions(record, token, opts = {})
     @message = opts[:custom_invite_message]
@@ -19,4 +23,10 @@ class DeviseMailer < Devise::Mailer
     super(record, token, opts.merge(headers))
   end
   # rubocop:enable Style/OptionHash
+
+  def confirmation_instructions(record, token, opts = {})
+    @name = record.name
+    opts[:subject] = "#{@name}, confirm your #{Settings::Community.community_name} account"
+    super
+  end
 end

@@ -9,18 +9,22 @@ class CommentsController < ApplicationController
 
   # GET /comments
   # GET /comments.json
+  # rubocop:disable Metrics/CyclomaticComplexity
+  # rubocop:disable Metrics/PerceivedComplexity
   def index
     skip_authorization
     @comment = Comment.new
     @podcast = Podcast.find_by(slug: params[:username])
 
     @root_comment = Comment.find(params[:id_code].to_i(26)) if params[:id_code].present?
+    redirect_if_different_subforem if @root_comment
 
     if @root_comment
       # 404 for all low-quality for not signed in
       not_found if @root_comment.score < Comment::LOW_QUALITY_THRESHOLD && !user_signed_in?
-      # 404 only for < -400 w/o children for signed in
-      not_found if @root_comment.score < Comment::HIDE_THRESHOLD && !@root_comment.has_children?
+      set_admin_access
+      # 404 only for < -400 w/o children for all except admins
+      not_found if !@is_admin && @root_comment.score < Comment::HIDE_THRESHOLD && !@root_comment.has_children?
     end
 
     if @podcast
@@ -35,8 +39,11 @@ class CommentsController < ApplicationController
 
     @commentable_type = @commentable.class.name if @commentable
 
-    set_surrogate_key_header "comments-for-#{@commentable.id}-#{@commentable_type}" if @commentable
+    set_surrogate_key_header @commentable.record_key if @commentable
   end
+  # rubocop:enable Metrics/CyclomaticComplexity
+  # rubocop:enable Metrics/PerceivedComplexity
+
   # GET /comments/1
   # GET /comments/1.json
   # GET /comments/1/edit
@@ -269,6 +276,15 @@ class CommentsController < ApplicationController
 
   private
 
+  # for spam content we need to remove cache control headers to access current_user to check admin access
+  # so that admins could have access to spam articles, profiles and comments (by direct url)
+  def set_admin_access
+    return unless user_signed_in?
+
+    unset_cache_control_headers
+    @is_admin = current_user&.any_admin?
+  end
+
   def comment_should_be_visible?
     if @article
       @article.published?
@@ -336,5 +352,14 @@ class CommentsController < ApplicationController
 
     thread_authors_ids = comment.ancestors.pluck(:user_id)
     UserBlock.exists?(blocker_id: thread_authors_ids, blocked_id: current_user.id)
+  end
+
+  def redirect_if_different_subforem
+    commentable = @root_comment.commentable
+    return unless commentable.present? && commentable.class.name == "Article"
+
+    if should_redirect_to_subforem?(commentable)
+      redirect_to URL.comment(@root_comment), allow_other_host: true, status: :moved_permanently
+    end
   end
 end

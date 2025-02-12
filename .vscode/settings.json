@@ -1,11 +1,18 @@
 {
-  "ruby.useBundler": true,
-  "ruby.useLanguageServer": true,
-  "ruby.lint": {
-    "rubocop": {
-      "useBundler": true
-    }
+  "rubyLsp.rubyVersionManager": {
+    "identifier": "auto"
   },
-  "ruby.format": "rubocop",
-  "ruby.intellisense": "rubyLocate"
+  "rubyLsp.formatter": "rubocop",
+  "files.watcherExclude": {
+    "**/tmp/**": true,
+    "**/log/**": true,
+    "**/node_modules/**": true,
+    "**/public/packs/**": true
+  },
+  "search.exclude": {
+    "**/tmp/**": true,
+    "**/log/**": true,
+    "**/node_modules/**": true,
+    "**/public/packs/**": true
+  }
 }

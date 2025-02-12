@@ -10,6 +10,8 @@
 I18n.defaultLocale = 'en';
 I18n.locale = document.body.dataset.locale;
 I18n.translations = JSON.parse(document.getElementById('i18n-translations').dataset.translations);
+const isForemWebview = navigator.userAgent.includes('ForemWebView/1');
+
 var instantClick
   , InstantClick = instantClick = function(document, location, $userAgent) {
   // Internal variables
@@ -65,6 +67,9 @@ var instantClick
       if (!elem.hasAttribute) { // Parent of <html>
         break
       }
+      if (isForemWebview) {
+        return true
+      }
       if (elem.hasAttribute('data-instant')) {
         return false
       }
@@ -117,9 +122,14 @@ var instantClick
 
   function changePage(title, body, newUrl, scrollY, pop) {
     var pageContentDiv = document.getElementById("page-content");
-    var memberMenuButton = document.getElementById("member-menu-button")
+    var memberMenuButton = document.getElementById("member-menu-button");
+    var searchTypeahead = document.getElementById("search-typeahead");
     if (memberMenuButton) {
       memberMenuButton.classList.remove('showing')
+    }
+    if (searchTypeahead) {
+      document.getElementById('search-input').value = ''
+      searchTypeahead.classList.add('hidden');
     }
     document.body.replaceChild(body, pageContentDiv)
 

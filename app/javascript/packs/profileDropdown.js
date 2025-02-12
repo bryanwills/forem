@@ -1,5 +1,6 @@
 import { initBlock } from '../profileDropdown/blockButton';
 import { initFlag } from '../profileDropdown/flagButton';
+import { initSpam } from '../profileDropdown/spamButton';
 import { initializeDropdown } from '@utilities/dropdownUtils';
 
 /* global userData */
@@ -7,6 +8,7 @@ import { initializeDropdown } from '@utilities/dropdownUtils';
 function initButtons() {
   initBlock();
   initFlag();
+  initSpam();
 }
 
 function initDropdown() {
@@ -17,16 +19,14 @@ function initDropdown() {
   }
   const currentUser = userData();
 
-  if (
-    !profileDropdownDiv ||
-    (currentUser &&
-      currentUser.username === profileDropdownDiv.dataset.username)
-  ) {
+  if (!profileDropdownDiv) {
     // Hide this menu when user views their own profile
     return;
   }
 
-  profileDropdownDiv.classList.remove('hidden');
+  if (currentUser && currentUser.username === profileDropdownDiv.dataset.username) {
+      profileDropdownDiv.style.display = 'none';
+  }
 
   initializeDropdown({
     triggerElementId: 'user-profile-dropdown',
